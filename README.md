@@ -33,8 +33,9 @@ You have **two options** to install the extension:
 2. **Build from source:**
    - Clone the repository:
      ```sh
-     git clone https://github.com/cycyrild/SebBypass.git
-     cd SebBypass
+     git clone https://github.com/ArthaFreestyle/SEB-BYPASSER
+     cd SEB-BYPASSER
+     
      ```
    - Install the dependencies:
      ```sh
