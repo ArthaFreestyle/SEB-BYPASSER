@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import ReactDOM from 'react-dom/client'
 import "./debugging.css";
 import { SebFile } from './seb-tools';
-import { Helmet } from 'react-helmet';
+
+document.title = 'SEB file debugging';
 
 const App = () => {
 
@@ -13,39 +14,39 @@ const App = () => {
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        const text = e.target?.result;
-        if (text && typeof text === 'string') {
-          const sebFileInstance = await SebFile.createInstance(text);
-
-          if (!sebFileInstance) {
-            alert('Error parsing SEB file');
-            return;
-          }
-          setConfigHash(sebFileInstance.ConfigHash);
-
-          setSebFile(sebFileInstance);
-          setUrl(sebFileInstance.StartUrl ? sebFileInstance.StartUrl : "");
-        }
-      };
-      reader.readAsText(file);
+    if (!file) {
+      return;
     }
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const text = reader.result;
+      if (typeof text !== 'string') {
+        return;
+      }
+      const sebFileInstance = await SebFile.createInstance(text);
+      if (!sebFileInstance) {
+        alert('Error parsing SEB file');
+        return;
+      }
+      setConfigHash(sebFileInstance.ConfigHash);
+      setSebFile(sebFileInstance);
+      const startUrl = sebFileInstance.StartUrl ?? "";
+      setUrl(startUrl);
+      if (startUrl) {
+        setHash(sebFileInstance.getConfigKey(startUrl));
+      }
+    };
+    reader.readAsText(file);
   };
 
   const handleUrlSubmit = () => {
     if (sebFile && url) {
-      const configKey = sebFile.getConfigKey(url);
-      setHash(configKey);
+      setHash(sebFile.getConfigKey(url));
     }
   };
 
   return (
     <div>
-      <Helmet>
-        <title>SEB file debugging</title>
-      </Helmet>
       <h1>SEB file debugging</h1>
       <input
         type="file"
@@ -57,10 +58,10 @@ const App = () => {
       <textarea
         rows={10}
         cols={50}
-        value={sebFile?.SerializedJson}
+        value={sebFile?.SerializedJson ?? ''}
         readOnly
         placeholder="JSON output will appear here"
-      ></textarea>
+      />
       <br />
       <h3>Config Hash</h3>
       <textarea
@@ -69,7 +70,7 @@ const App = () => {
         value={configHash}
         readOnly
         placeholder="Hash output will appear here"
-      ></textarea>
+      />
       <br />
       <h2>Get Config Key</h2>
       <input
@@ -89,7 +90,7 @@ const App = () => {
         value={hash}
         readOnly
         placeholder="Hash output will appear here"
-      ></textarea>
+      />
     </div>
   );
 };
