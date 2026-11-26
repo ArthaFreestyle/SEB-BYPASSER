@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "check": "node scripts/check-seb-tools.ts"
+    "check": "node scripts/check-seb-tools.ts && node scripts/check-header-handler.ts"
   },
   "dependencies": {
     "@xmldom/xmldom": "^0.8.10",

@@ -1,5 +1,5 @@
-import { MessageResponse } from "./messages";
-import { SebFile } from "./seb-tools";
+import type { MessageResponse } from "./messages.ts";
+import { SebFile } from "./seb-tools.ts";
 
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.198 SEB/3.7.0 (x64)";
 const SEB_CKH_HTTP_HEADER_NAME = "X-SafeExamBrowser-ConfigKeyHash";
@@ -21,11 +21,18 @@ function toCdpPattern(pattern: string): string {
     return trimmed === "<all_urls>" ? "*" : trimmed;
 }
 
+function isExpectedDetachError(err: unknown): boolean {
+    const msg = err instanceof Error ? err.message : String(err);
+    return /debugger is not attached|no tab with given id|no target with given id|invalid requestid|invalid interceptionid|inspected target navigated or closed|cannot access/i.test(msg);
+}
+
 export class HeaderHandler {
     private isEnabled = false;
+    private sessionEpoch = 0;
     private sebFile?: SebFile;
     private rqUrlsFilter: string[] = ["<all_urls>"];
     private attachedTabs = new Set<number>();
+    private pendingTabs = new Map<number, Promise<void>>();
     private keepAlive?: ReturnType<typeof setInterval>;
     private restorePromise?: Promise<void>;
 
@@ -55,6 +62,19 @@ export class HeaderHandler {
     private async onRequestPaused(tabId: number, event: RequestPaused): Promise<void> {
         if (this.restorePromise) {
             await this.restorePromise;
+        }
+
+        if (!this.isEnabled) {
+            try {
+                await chrome.debugger.sendCommand({ tabId }, 'Fetch.continueRequest', {
+                    requestId: event.requestId
+                });
+            } catch (err) {
+                if (!isExpectedDetachError(err)) {
+                    console.error("Error continuing request:", err);
+                }
+            }
+            return;
         }
 
         const headers: Header[] = [];
@@ -95,34 +115,71 @@ export class HeaderHandler {
                 headers
             });
         } catch (err) {
-            console.error("Error continuing request:", err);
+            if (isExpectedDetachError(err)) {
+                if (/debugger is not attached/i.test(err instanceof Error ? err.message : String(err))) {
+                    this.attachedTabs.delete(tabId);
+                }
+                console.debug("SEB: skipped continuing request on detached/closed tab", tabId, err);
+            } else {
+                console.error("Error continuing request:", err);
+            }
         }
     }
 
-    public async ensureTab(tabId: number): Promise<void> {
+    public ensureTab(tabId: number): Promise<void> {
+        const pending = this.pendingTabs.get(tabId);
+        if (pending) {
+            return pending;
+        }
+        const task = this.doEnsureTab(tabId).finally(() => {
+            this.pendingTabs.delete(tabId);
+        });
+        this.pendingTabs.set(tabId, task);
+        return task;
+    }
+
+    private async doEnsureTab(tabId: number): Promise<void> {
         if (this.restorePromise) {
             await this.restorePromise;
         }
 
+        const epoch = this.sessionEpoch;
         if (!this.isEnabled || this.attachedTabs.has(tabId)) {
             return;
         }
 
         const tab = await chrome.tabs.get(tabId).catch(() => undefined);
-        if (!tab?.url || !/^https?:/i.test(tab.url)) {
+        if (!this.isEnabled || this.sessionEpoch !== epoch || !tab?.url || !/^https?:/i.test(tab.url)) {
             return;
         }
 
+        let attachedNow = false;
         try {
             await chrome.debugger.attach({ tabId }, CDP_VERSION);
+            attachedNow = true;
         } catch {
             // already attached (e.g. previous service worker, or DevTools open)
         }
 
+        if (!this.isEnabled || this.sessionEpoch !== epoch) {
+            if (attachedNow) {
+                await chrome.debugger.detach({ tabId }).catch(() => undefined);
+            }
+            return;
+        }
+
         try {
             await chrome.debugger.sendCommand({ tabId }, 'Fetch.enable', { patterns: this.patterns() });
-            this.attachedTabs.add(tabId);
+            if (this.isEnabled && this.sessionEpoch === epoch) {
+                this.attachedTabs.add(tabId);
+            } else {
+                await chrome.debugger.sendCommand({ tabId }, 'Fetch.disable').catch(() => undefined);
+                await chrome.debugger.detach({ tabId }).catch(() => undefined);
+            }
         } catch (err) {
+            if (attachedNow) {
+                await chrome.debugger.detach({ tabId }).catch(() => undefined);
+            }
             console.debug("SEB: cannot intercept tab", tabId, err);
         }
     }
@@ -176,6 +233,7 @@ export class HeaderHandler {
     }
 
     public enable(sebFile: SebFile, rqUrlsFilter: string[]): void {
+        this.sessionEpoch++;
         this.sebFile = sebFile;
         this.rqUrlsFilter = rqUrlsFilter;
         this.isEnabled = true;
@@ -187,6 +245,7 @@ export class HeaderHandler {
         if (!this.isEnabled) {
             return;
         }
+        this.sessionEpoch++;
         this.isEnabled = false;
         this.sebFile = undefined;
         this.stopKeepAlive();
