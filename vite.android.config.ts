@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import { resolve } from 'path';
 
 export default defineConfig({
+    publicDir: false,
     build: {
         outDir: resolve(import.meta.dirname, 'android/app/src/main/assets/seb-extension'),
         emptyOutDir: false,

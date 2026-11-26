@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { SebFile } from '../src/seb-tools.ts';
 
 type HeaderEntry = { name: string; value?: string };
@@ -73,5 +75,20 @@ messageHandler({ action: 'disable' });
 await new Promise(resolve => setTimeout(resolve, 10));
 assert.equal(registeredListener, undefined);
 assert.equal((postedMessages[postedMessages.length - 1] as { enabled: boolean }).enabled, false);
+
+const manifestPath = path.resolve(import.meta.dirname, '../android/app/src/main/assets/seb-extension/manifest.json');
+const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as {
+    manifest_version?: number;
+    browser_specific_settings?: { gecko?: { id?: string } };
+    permissions?: string[];
+    background?: { scripts?: string[] };
+};
+assert.equal(manifest.manifest_version, 2, 'GeckoView built-in extension must stay MV2');
+assert.equal(manifest.browser_specific_settings?.gecko?.id, 'seb-bypass@overlord08x.dev');
+assert.ok(manifest.permissions?.includes('geckoViewAddons'));
+assert.ok(manifest.permissions?.includes('nativeMessaging'));
+assert.ok(manifest.permissions?.includes('webRequest'));
+assert.ok(manifest.permissions?.includes('webRequestBlocking'));
+assert.ok(manifest.background?.scripts?.includes('background.js'));
 
 console.log('android-ext checks passed');

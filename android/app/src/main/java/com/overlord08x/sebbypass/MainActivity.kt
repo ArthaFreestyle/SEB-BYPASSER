@@ -17,6 +17,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoView
@@ -45,6 +46,7 @@ class MainActivity : AppCompatActivity() {
     private var canGoBackState = false
     private var shouldAutoNavigateStartUrl = false
     private var hasLoadedAnyPage = false
+    private var pendingPageFileCallback: ((List<Uri>) -> Unit)? = null
 
     private val openSebFileLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -52,6 +54,22 @@ class MainActivity : AppCompatActivity() {
         if (uri != null) {
             readAndEnableSebFile(uri)
         }
+    }
+
+    private val openSinglePageFileLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        val callback = pendingPageFileCallback
+        pendingPageFileCallback = null
+        callback?.invoke(if (uri != null) listOf(uri) else emptyList())
+    }
+
+    private val openMultiplePageFileLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris: List<Uri> ->
+        val callback = pendingPageFileCallback
+        pendingPageFileCallback = null
+        callback?.invoke(uris)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -90,9 +108,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun applyWindowInsets() {
         val root = findViewById<View>(R.id.rootContainer)
+        WindowInsetsControllerCompat(window, root).apply {
+            isAppearanceLightStatusBars = false
+            isAppearanceLightNavigationBars = false
+        }
         ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            view.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            val ime = insets.getInsets(WindowInsetsCompat.Type.ime())
+            view.setPadding(bars.left, bars.top, bars.right, maxOf(bars.bottom, ime.bottom))
             insets
         }
     }
@@ -138,8 +161,31 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        geckoSession.promptDelegate = SebPromptDelegate(this, ::launchPageFilePicker)
         geckoSession.open(app.runtime)
         geckoView.setSession(geckoSession)
+    }
+
+    private fun launchPageFilePicker(
+        mimeTypes: Array<String>,
+        multiple: Boolean,
+        callback: (List<Uri>) -> Unit
+    ): Boolean {
+        if (pendingPageFileCallback != null) {
+            return false
+        }
+        pendingPageFileCallback = callback
+        return try {
+            if (multiple) {
+                openMultiplePageFileLauncher.launch(mimeTypes)
+            } else {
+                openSinglePageFileLauncher.launch(mimeTypes)
+            }
+            true
+        } catch (_: Exception) {
+            pendingPageFileCallback = null
+            false
+        }
     }
 
     private fun setupControls() {
@@ -240,8 +286,9 @@ class MainActivity : AppCompatActivity() {
 
             geckoSession.settings.userAgentOverride = status.userAgent.ifEmpty { DEFAULT_SEB_USER_AGENT }
 
-            if (shouldAutoNavigateStartUrl && status.sebStartUrl.isNotEmpty()) {
-                shouldAutoNavigateStartUrl = false
+            val autoNavigate = shouldAutoNavigateStartUrl
+            shouldAutoNavigateStartUrl = false
+            if (autoNavigate && status.sebStartUrl.isNotEmpty()) {
                 loadTargetUrl(status.sebStartUrl)
             }
         } else {
