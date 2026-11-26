@@ -1,120 +1,255 @@
-import { MessageResponse } from "./messages";
-import { SebFile } from "./seb-tools";
+import type { MessageResponse } from "./messages.ts";
+import { SebFile } from "./seb-tools.ts";
 
 const USER_AGENT = "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/86.0.4240.198 SEB/3.7.0 (x64)";
-// const CSP_HEADERS = ["content-security-policy", "x-frame-options"];
 const SEB_CKH_HTTP_HEADER_NAME = "X-SafeExamBrowser-ConfigKeyHash";
+const CDP_VERSION = "1.3";
+const KEEP_ALIVE_MS = 20_000;
+
+type Header = { name: string; value: string };
+
+interface RequestPaused {
+    requestId: string;
+    request: {
+        url: string;
+        headers?: Record<string, string>;
+    };
+}
+
+function toCdpPattern(pattern: string): string {
+    const trimmed = pattern.trim();
+    return trimmed === "<all_urls>" ? "*" : trimmed;
+}
+
+function isExpectedDetachError(err: unknown): boolean {
+    const msg = err instanceof Error ? err.message : String(err);
+    return /debugger is not attached|no tab with given id|no target with given id|invalid requestid|invalid interceptionid|inspected target navigated or closed|cannot access/i.test(msg);
+}
 
 export class HeaderHandler {
-    private isEnabled: boolean;
+    private isEnabled = false;
+    private sessionEpoch = 0;
     private sebFile?: SebFile;
-    private onBeforeSendHeadersProcessing: (details: chrome.webRequest.WebRequestHeadersDetails) => chrome.webRequest.BlockingResponse | void;
-    // private onHeadersReceivedProcessing: (details: chrome.webRequest.WebResponseHeadersDetails) => chrome.webRequest.BlockingResponse | void;
-
-    private rqUrlsFilter: string[] | undefined;
+    private rqUrlsFilter: string[] = ["<all_urls>"];
+    private attachedTabs = new Set<number>();
+    private pendingTabs = new Map<number, Promise<void>>();
+    private keepAlive?: ReturnType<typeof setInterval>;
+    private restorePromise?: Promise<void>;
 
     constructor() {
-        this.isEnabled = false;
-        this.sebFile = undefined;
-        this.onBeforeSendHeadersProcessing = this.onBeforeSendHeaders.bind(this);
-        // this.onHeadersReceivedProcessing = this.onHeadersReceived.bind(this);
+        chrome.debugger.onEvent.addListener((source, method, params) => {
+            if (method === 'Fetch.requestPaused' && source.tabId !== undefined) {
+                void this.onRequestPaused(source.tabId, params as RequestPaused);
+            }
+        });
+
+        chrome.debugger.onDetach.addListener(source => {
+            if (source.tabId !== undefined) {
+                this.attachedTabs.delete(source.tabId);
+            }
+        });
+    }
+
+    public setRestorePromise(promise: Promise<void>): void {
+        this.restorePromise = promise;
+    }
+
+    private patterns() {
+        const filter = this.rqUrlsFilter.length > 0 ? this.rqUrlsFilter : ["<all_urls>"];
+        return filter.map(pattern => ({ urlPattern: toCdpPattern(pattern) }));
+    }
+
+    private async onRequestPaused(tabId: number, event: RequestPaused): Promise<void> {
+        if (this.restorePromise) {
+            await this.restorePromise;
+        }
+
+        if (!this.isEnabled) {
+            try {
+                await chrome.debugger.sendCommand({ tabId }, 'Fetch.continueRequest', {
+                    requestId: event.requestId
+                });
+            } catch (err) {
+                if (!isExpectedDetachError(err)) {
+                    console.error("Error continuing request:", err);
+                }
+            }
+            return;
+        }
+
+        const headers: Header[] = [];
+        let hasUserAgent = false;
+
+        for (const [name, value] of Object.entries(event.request.headers ?? {})) {
+            const lower = name.toLowerCase();
+            if (lower === SEB_CKH_HTTP_HEADER_NAME.toLowerCase()) {
+                continue;
+            }
+            if (lower === "user-agent") {
+                hasUserAgent = true;
+                headers.push({ name, value: USER_AGENT });
+                continue;
+            }
+            if (lower === "sec-ch-ua-platform") {
+                headers.push({ name, value: '"Windows"' });
+                continue;
+            }
+            headers.push({ name, value });
+        }
+
+        if (!hasUserAgent) {
+            headers.push({ name: "User-Agent", value: USER_AGENT });
+        }
+
+        try {
+            if (this.sebFile) {
+                headers.push({ name: SEB_CKH_HTTP_HEADER_NAME, value: this.sebFile.getConfigKey(event.request.url) });
+            }
+        } catch (err) {
+            console.error("Error fetching config key:", err);
+        }
+
+        try {
+            await chrome.debugger.sendCommand({ tabId }, 'Fetch.continueRequest', {
+                requestId: event.requestId,
+                headers
+            });
+        } catch (err) {
+            if (isExpectedDetachError(err)) {
+                if (/debugger is not attached/i.test(err instanceof Error ? err.message : String(err))) {
+                    this.attachedTabs.delete(tabId);
+                }
+                console.debug("SEB: skipped continuing request on detached/closed tab", tabId, err);
+            } else {
+                console.error("Error continuing request:", err);
+            }
+        }
+    }
+
+    public ensureTab(tabId: number): Promise<void> {
+        const pending = this.pendingTabs.get(tabId);
+        if (pending) {
+            return pending;
+        }
+        const task = this.doEnsureTab(tabId).finally(() => {
+            this.pendingTabs.delete(tabId);
+        });
+        this.pendingTabs.set(tabId, task);
+        return task;
+    }
+
+    private async doEnsureTab(tabId: number): Promise<void> {
+        if (this.restorePromise) {
+            await this.restorePromise;
+        }
+
+        const epoch = this.sessionEpoch;
+        if (!this.isEnabled || this.attachedTabs.has(tabId)) {
+            return;
+        }
+
+        const tab = await chrome.tabs.get(tabId).catch(() => undefined);
+        if (!this.isEnabled || this.sessionEpoch !== epoch || !tab?.url || !/^https?:/i.test(tab.url)) {
+            return;
+        }
+
+        let attachedNow = false;
+        try {
+            await chrome.debugger.attach({ tabId }, CDP_VERSION);
+            attachedNow = true;
+        } catch {
+            // already attached (e.g. previous service worker, or DevTools open)
+        }
+
+        if (!this.isEnabled || this.sessionEpoch !== epoch) {
+            if (attachedNow) {
+                await chrome.debugger.detach({ tabId }).catch(() => undefined);
+            }
+            return;
+        }
+
+        try {
+            await chrome.debugger.sendCommand({ tabId }, 'Fetch.enable', { patterns: this.patterns() });
+            if (this.isEnabled && this.sessionEpoch === epoch) {
+                this.attachedTabs.add(tabId);
+            } else {
+                await chrome.debugger.sendCommand({ tabId }, 'Fetch.disable').catch(() => undefined);
+                await chrome.debugger.detach({ tabId }).catch(() => undefined);
+            }
+        } catch (err) {
+            if (attachedNow) {
+                await chrome.debugger.detach({ tabId }).catch(() => undefined);
+            }
+            console.debug("SEB: cannot intercept tab", tabId, err);
+        }
+    }
+
+    private async ensureAllTabs(): Promise<void> {
+        const tabs = await chrome.tabs.query({}).catch(() => []);
+        await Promise.all(tabs.filter(tab => tab.id !== undefined).map(tab => this.ensureTab(tab.id!)));
+    }
+
+    private async detachAllTabs(): Promise<void> {
+        const tabIds = [...this.attachedTabs];
+        this.attachedTabs.clear();
+        await Promise.all(tabIds.map(async tabId => {
+            try {
+                await chrome.debugger.sendCommand({ tabId }, 'Fetch.disable');
+                await chrome.debugger.detach({ tabId });
+            } catch {
+                // tab closed or already detached
+            }
+        }));
+    }
+
+    private startKeepAlive(): void {
+        this.stopKeepAlive();
+        // Chrome >= 110 resets the service worker idle timer on extension API calls.
+        this.keepAlive = setInterval(() => { void chrome.runtime.getPlatformInfo(); }, KEEP_ALIVE_MS);
+    }
+
+    private stopKeepAlive(): void {
+        if (this.keepAlive !== undefined) {
+            clearInterval(this.keepAlive);
+            this.keepAlive = undefined;
+        }
     }
 
     public updateRqUrlsFilter(rqUrlsFilter: string[]): void {
+        this.rqUrlsFilter = rqUrlsFilter;
         if (this.isEnabled) {
-            chrome.webRequest.onBeforeSendHeaders.removeListener(this.onBeforeSendHeadersProcessing);
-            // chrome.webRequest.onHeadersReceived.removeListener(this.onHeadersReceivedProcessing);
-
-            chrome.webRequest.onBeforeSendHeaders.addListener(
-                this.onBeforeSendHeadersProcessing,
-                { urls: rqUrlsFilter },
-                ["blocking", "requestHeaders"]
-            );
-
-            // chrome.webRequest.onHeadersReceived.addListener(
-            //     this.onHeadersReceivedProcessing,
-            //     { urls: rqUrlsFilter },
-            //     ["blocking", "responseHeaders"]
-            // );
-
-            this.rqUrlsFilter = rqUrlsFilter;
-        } else {
-            throw new Error("Not enabled");
+            void this.reapplyPatterns();
         }
     }
 
-    // private onHeadersReceived(details: chrome.webRequest.WebResponseHeadersDetails): chrome.webRequest.BlockingResponse | void {
-    //     // Remove CSP headers
-    //     details.responseHeaders = details.responseHeaders!.filter(header => {
-    //         const headerName = header.name.toLowerCase();
-    //         return !CSP_HEADERS.includes(headerName);
-    //     });
-
-    //     return { responseHeaders: details.responseHeaders };
-    // }
-
-    private onBeforeSendHeaders(details: chrome.webRequest.WebRequestHeadersDetails): chrome.webRequest.BlockingResponse | void {
-        // Modify User-Agent header
-        const userAgentHeader = details.requestHeaders!.find(header => header.name.toLowerCase() === "user-agent");
-        if (userAgentHeader) {
-            userAgentHeader.value = USER_AGENT;
-        } else {
-            throw new Error("No user agent");
-        }
-            
-        // Add X-SafeExamBrowser-ConfigKeyHash header
-        if (this.sebFile) {
+    private async reapplyPatterns(): Promise<void> {
+        await Promise.all([...this.attachedTabs].map(async tabId => {
             try {
-                const configKey = this.sebFile.getConfigKey(details.url);
-                const newHeader = { name: SEB_CKH_HTTP_HEADER_NAME, value: configKey };
-                details.requestHeaders!.push(newHeader);
-            } catch (err) {
-                console.error("Error fetching config key:", err);
-                throw err;
+                await chrome.debugger.sendCommand({ tabId }, 'Fetch.enable', { patterns: this.patterns() });
+            } catch {
+                this.attachedTabs.delete(tabId);
             }
-        }
-        else {
-            throw new Error("No SEB file");
-        }
-
-        return { requestHeaders: details.requestHeaders };
+        }));
     }
 
     public enable(sebFile: SebFile, rqUrlsFilter: string[]): void {
-        if (!this.isEnabled) {
-            this.sebFile = sebFile;
-
-            chrome.webRequest.onBeforeSendHeaders.addListener(
-                this.onBeforeSendHeadersProcessing,
-                { urls: rqUrlsFilter },
-                ["blocking", "requestHeaders"]
-            );
-
-            // chrome.webRequest.onHeadersReceived.addListener(
-            //     this.onHeadersReceivedProcessing,
-            //     { urls: rqUrlsFilter },
-            //     ["blocking", "responseHeaders"]
-            // );
-
-            this.isEnabled = true;
-            this.rqUrlsFilter = rqUrlsFilter;
-        }
-        else {
-            throw new Error("Already enabled");
-        }
+        this.sessionEpoch++;
+        this.sebFile = sebFile;
+        this.rqUrlsFilter = rqUrlsFilter;
+        this.isEnabled = true;
+        this.startKeepAlive();
+        void this.ensureAllTabs();
     }
 
     public disable(): void {
-        if (this.isEnabled) {
-            chrome.webRequest.onBeforeSendHeaders.removeListener(this.onBeforeSendHeadersProcessing);
-            // chrome.webRequest.onHeadersReceived.removeListener(this.onHeadersReceivedProcessing);
-
-            this.isEnabled = false;
-            this.sebFile = undefined;
-            this.rqUrlsFilter = undefined;
-        } else {
-            throw new Error("Already disabled");
+        if (!this.isEnabled) {
+            return;
         }
+        this.sessionEpoch++;
+        this.isEnabled = false;
+        this.sebFile = undefined;
+        this.stopKeepAlive();
+        void this.detachAllTabs();
     }
 
     public getStatus(errorMsg?: string): MessageResponse {

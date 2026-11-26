@@ -1,61 +1,61 @@
 # EZ SEB (Safe Exam Browser) Bypass
 
-### Description
-Easy browser extension to bypass the execution of quizzes in Safe Exam Browser (SEB).
+Browser extension to bypass the execution of quizzes in Safe Exam Browser (SEB).
 
-The extension works by intercepting your browser requests and modifying HTTP headers.
+The extension intercepts outgoing requests of the exam tab and rewrites them:
 
-### Compatibility
+- `User-Agent` → SEB user agent string
+- `X-SafeExamBrowser-ConfigKeyHash` → SHA-256 of `request URL + config key hash`, derived from your `.seb` file
 
-This extension works on all Chromium-based browsers (e.g., Google Chrome, Microsoft Edge, Brave, Opera) and is compatible with all operating systems (Windows, macOS, Linux).
+## Compatibility
 
-![Demo](./demo.gif)
+Manifest V3, Chromium-based browsers (Chrome, Edge, Brave, Opera) on Windows, macOS and Linux.
 
+Chrome no longer allows `webRequestBlocking` for sideloaded extensions, so interception is done through the `chrome.debugger` API. Chrome shows a "SEB started debugging this browser" banner while the extension is enabled — that is expected and required.
 
+## Installation
 
-### Installation
+### From a release
 
-You have **two options** to install the extension:
+1. Download the latest release and unzip it. You should see a `dist` folder.
+2. Open `chrome://extensions/`.
+3. Enable "Developer mode".
+4. Click "Load unpacked" and select the `dist` folder (the one containing `manifest.json`).
 
-1. **Download a built version from releases:**
-   - Go to the [releases](https://github.com/cycyrild/SebBypass/releases) page.
-   - Download the latest release.
+### From source
 
-    **Unzip the downloaded file:**
-   - Extract the contents of the downloaded file. You should see a folder with a subfolder named `dist`.
+```sh
+git clone https://github.com/ArthaFreestyle/SEB-BYPASSER
+cd SEB-BYPASSER
+npm install
+npm run build
+```
 
-    **Load the extension in Chrome:**
-   - Open the Chrome browser and navigate to `chrome://extensions/`.
-   - Enable "Developer mode" by toggling the switch in the top-right corner.
-   - Click on "Load unpacked" and select the `dist` directory which contains the `manifest.json` file.
+Then load the generated `dist` folder the same way.
 
+Checks:
 
-2. **Build from source:**
-   - Clone the repository:
-     ```sh
-     git clone https://github.com/ArthaFreestyle/SEB-BYPASSER
-     cd SEB-BYPASSER
-     
-     ```
-   - Install the dependencies:
-     ```sh
-     npm install
-     ```
-   - Compile the project:
-     ```sh
-     npm run build
-     ```
-   - Load the extension in Chrome:
-     - Open the Chrome browser and navigate to `chrome://extensions/`.
-     - Enable "Developer mode" by toggling the switch in the top-right corner.
-     - Click on "Load unpacked" and select the directory where the extension files are located (`dist` folder).
+```sh
+npm run check   # SEB parse / serialize / hash self-check
+```
 
+## Usage
 
+1. Click the extension icon. A configuration window opens.
+2. Click "Choose File" and pick your SEB configuration file (`.seb` / `.xml`).
+3. The extension reports `ENABLED` and lists the start URL.
+4. Reload the exam tab (or navigate to the start URL) so the first document request is signed.
 
-    ### Usage
+While enabled:
 
-    To use the Chrome extension, follow these steps:
+- "Request URLs filter" accepts a JSON array of Chrome match patterns, e.g. `["https://exam.example.com/*"]`. Narrowing it avoids touching unrelated traffic.
+- "Update and set to the domain of the start URL" derives the filter from the SEB config.
+- "Disable" detaches the debugger and stops interception.
 
-    1. Click on the extension icon to open the interface.
-    2. Click on the "Choose File" button and select your SEB configuration file from your computer.
-    3. Once the file is uploaded, the extension will bypass the execution of quizzes in SEB and allow you to take the quiz directly in your current browser.
+`debugging.html` (linked at the bottom of the popup) shows the parsed config JSON, the config hash, and the config key for an arbitrary URL.
+
+## How it works
+
+- `src/seb-tools.ts` parses the SEB plist XML into a dictionary, serializes it the way SEB does (sorted keys, `originatorVersion` dropped, compact JSON) and hashes it with SHA-256. The config key for a request is `SHA256(requestURL + configHash)`.
+- `src/header-handler.ts` attaches the debugger to each tab, enables CDP `Fetch` interception, and rewrites headers on `Fetch.requestPaused`.
+- `src/background.ts` is the MV3 service worker: message API, state persisted in `chrome.storage.session`, reattach after service worker restarts.
