@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.overlord08x.sebbypass"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.overlord08x.sebbypass"
@@ -45,5 +45,5 @@ kotlin {
 
 dependencies {
     implementation("androidx.appcompat:appcompat:1.8.0")
-    implementation("org.mozilla.geckoview:geckoview:161.0.20261118180411")
+    implementation("org.mozilla.geckoview:geckoview:147.0.20260212191108")
 }
