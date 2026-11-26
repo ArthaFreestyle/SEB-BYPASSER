@@ -1,6 +1,7 @@
 package com.overlord08x.sebbypass
 
 import android.app.Application
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -9,6 +10,7 @@ import org.json.JSONObject
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoRuntime
 import org.mozilla.geckoview.WebExtension
+import java.io.File
 
 data class SebStatus(
     val enabled: Boolean = false,
@@ -26,6 +28,7 @@ class SebApp : Application() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var activePort: WebExtension.Port? = null
     private var pendingCommand: JSONObject? = null
+    private var isExtensionRegistered = false
 
     var currentStatus: SebStatus = SebStatus()
         private set
@@ -35,39 +38,84 @@ class SebApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        runtime = GeckoRuntime.create(this)
-        installBuiltInExtension()
+        val processName = resolveProcessName()
+        SebCrashReporter.install(this, processName)
+
+        // GeckoView child processes (:tab0, :gpu, :socket, etc.) also instantiate Application.
+        // Initializing GeckoRuntime inside a child process breaks or crashes child spawning.
+        if (processName != packageName) {
+            return
+        }
+
+        ensureRuntimeInitialized()
+    }
+
+    @Synchronized
+    fun ensureRuntimeInitialized(): GeckoRuntime {
+        if (!::runtime.isInitialized) {
+            runtime = GeckoRuntime.create(this)
+            runtime.delegate = GeckoRuntime.Delegate {
+                Log.e(TAG, "GeckoRuntime shut down unexpectedly")
+                mainHandler.post {
+                    activePort = null
+                    currentStatus = currentStatus.copy(
+                        errorMsg = "Browser engine stopped unexpectedly. Reopen app if pages fail to load."
+                    )
+                    onStatusChanged?.invoke(currentStatus)
+                }
+            }
+        }
+        if (!isExtensionRegistered) {
+            isExtensionRegistered = true
+            installBuiltInExtension()
+        }
+        return runtime
+    }
+
+    private fun resolveProcessName(): String {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            return getProcessName()
+        }
+        return try {
+            File("/proc/self/cmdline").readText().trim('\u0000', ' ', '\n', '\r')
+        } catch (_: Throwable) {
+            packageName
+        }
     }
 
     private fun installBuiltInExtension() {
         val portDelegate = object : WebExtension.PortDelegate {
             override fun onPortMessage(message: Any, port: WebExtension.Port) {
-                val obj = message as? JSONObject ?: return
-                if (obj.optString("action") != "status") return
+                try {
+                    val obj = message as? JSONObject ?: return
+                    if (obj.optString("action") != "status") return
 
-                val filters = mutableListOf<String>()
-                val arr = obj.optJSONArray("rqUrlsFilter")
-                if (arr != null) {
-                    for (i in 0 until arr.length()) {
-                        filters.add(arr.optString(i))
+                    val filters = mutableListOf<String>()
+                    val arr = obj.optJSONArray("rqUrlsFilter")
+                    if (arr != null) {
+                        for (i in 0 until arr.length()) {
+                            filters.add(arr.optString(i))
+                        }
                     }
-                }
-                if (filters.isEmpty()) {
-                    filters.add("<all_urls>")
-                }
+                    if (filters.isEmpty()) {
+                        filters.add("<all_urls>")
+                    }
 
-                val status = SebStatus(
-                    enabled = obj.optBoolean("enabled", false),
-                    sebStartUrl = obj.optString("sebStartUrl", ""),
-                    configHash = obj.optString("configHash", ""),
-                    rqUrlsFilter = filters,
-                    userAgent = obj.optString("userAgent", ""),
-                    errorMsg = obj.optString("errorMsg", "")
-                )
+                    val status = SebStatus(
+                        enabled = obj.optBoolean("enabled", false),
+                        sebStartUrl = obj.optString("sebStartUrl", ""),
+                        configHash = obj.optString("configHash", ""),
+                        rqUrlsFilter = filters,
+                        userAgent = obj.optString("userAgent", ""),
+                        errorMsg = obj.optString("errorMsg", "")
+                    )
 
-                mainHandler.post {
-                    currentStatus = status
-                    onStatusChanged?.invoke(status)
+                    mainHandler.post {
+                        currentStatus = status
+                        onStatusChanged?.invoke(status)
+                    }
+                } catch (err: Throwable) {
+                    Log.e(TAG, "Failed to parse extension message", err)
                 }
             }
 
@@ -80,13 +128,15 @@ class SebApp : Application() {
 
         val messageDelegate = object : WebExtension.MessageDelegate {
             override fun onConnect(port: WebExtension.Port) {
+                // Attach delegate synchronously on UiThread so early messages never hit null delegate.
+                activePort = port
+                port.setDelegate(portDelegate)
+
                 mainHandler.post {
-                    activePort = port
-                    port.setDelegate(portDelegate)
                     val queued = pendingCommand
                     if (queued != null) {
                         pendingCommand = null
-                        port.postMessage(queued)
+                        sendCommand(queued)
                     }
                     onBridgeReady?.invoke()
                 }
@@ -122,10 +172,20 @@ class SebApp : Application() {
 
     fun sendCommand(payload: JSONObject) {
         val port = activePort
-        if (port != null) {
-            port.postMessage(payload)
-        } else {
+        if (port == null) {
             pendingCommand = payload
+            return
+        }
+        try {
+            port.postMessage(payload)
+        } catch (err: Throwable) {
+            Log.e(TAG, "Failed to post message to SEB extension", err)
+            activePort = null
+            pendingCommand = payload
+            currentStatus = currentStatus.copy(
+                errorMsg = "Extension bridge disconnected, retrying: ${err.message ?: err.javaClass.simpleName}"
+            )
+            onStatusChanged?.invoke(currentStatus)
         }
     }
 
