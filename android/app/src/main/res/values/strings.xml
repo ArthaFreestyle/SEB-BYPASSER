@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SEB Bypass</string>
+    <string name="status_enabled">ENABLED</string>
+    <string name="status_disabled">DISABLED</string>
+    <string name="btn_load_seb">Load .seb</string>
+    <string name="btn_disable">Disable</string>
+    <string name="btn_filter_all">All URLs</string>
+    <string name="btn_filter_domain">Start Domain</string>
+    <string name="url_hint">Enter URL or load .seb file</string>
+    <string name="welcome_title">SEB Exam Browser</string>
+    <string name="welcome_desc">Select a .seb or .xml configuration file to automatically inject the SEB User-Agent and X-SafeExamBrowser-ConfigKeyHash header on every GET and POST request.</string>
+    <string name="welcome_cta">Choose .seb or .xml File</string>
+</resources>

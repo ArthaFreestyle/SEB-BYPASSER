@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.SEBBypass" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@color/bg_base</item>
+        <item name="android:statusBarColor">@color/bg_card</item>
+        <item name="android:navigationBarColor">@color/bg_base</item>
+        <item name="colorPrimary">@color/accent_primary</item>
+        <item name="colorAccent">@color/accent_primary</item>
+    </style>
+</resources>

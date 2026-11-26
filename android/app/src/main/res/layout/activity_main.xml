@@ -1,0 +1,230 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rootContainer"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_base"
+    android:orientation="vertical">
+
+    <!-- Top SEB Status & Controls Toolbar -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/bg_card"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="8dp">
+
+        <TextView
+            android:id="@+id/tvStatusPill"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_pill_disabled"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="4dp"
+            android:text="@string/status_disabled"
+            android:textColor="@color/accent_danger"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvFilterInfo"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_marginEnd="6dp"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="No .seb loaded"
+            android:textColor="@color/text_secondary"
+            android:textSize="11sp" />
+
+        <Button
+            android:id="@+id/btnFilterDomain"
+            android:layout_width="wrap_content"
+            android:layout_height="32dp"
+            android:layout_marginEnd="6dp"
+            android:background="@drawable/bg_btn_secondary"
+            android:minWidth="0dp"
+            android:paddingHorizontal="10dp"
+            android:text="@string/btn_filter_all"
+            android:textAllCaps="false"
+            android:textColor="@color/text_primary"
+            android:textSize="11sp"
+            android:visibility="gone" />
+
+        <Button
+            android:id="@+id/btnLoadSeb"
+            android:layout_width="wrap_content"
+            android:layout_height="32dp"
+            android:background="@drawable/bg_btn_primary"
+            android:minWidth="0dp"
+            android:paddingHorizontal="12dp"
+            android:text="@string/btn_load_seb"
+            android:textAllCaps="false"
+            android:textColor="@color/text_primary"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnDisable"
+            android:layout_width="wrap_content"
+            android:layout_height="32dp"
+            android:layout_marginStart="6dp"
+            android:background="@drawable/bg_btn_danger"
+            android:minWidth="0dp"
+            android:paddingHorizontal="10dp"
+            android:text="@string/btn_disable"
+            android:textAllCaps="false"
+            android:textColor="#FCA5A5"
+            android:textSize="11sp"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <!-- Browser Navigation & URL Bar -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/bg_card"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="8dp"
+        android:paddingBottom="8dp">
+
+        <Button
+            android:id="@+id/btnBack"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
+            android:background="@drawable/bg_btn_secondary"
+            android:enabled="false"
+            android:padding="0dp"
+            android:text="&lt;"
+            android:textColor="@color/text_primary"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/btnForward"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
+            android:layout_marginStart="4dp"
+            android:background="@drawable/bg_btn_secondary"
+            android:enabled="false"
+            android:padding="0dp"
+            android:text="&gt;"
+            android:textColor="@color/text_primary"
+            android:textSize="14sp" />
+
+        <EditText
+            android:id="@+id/etUrl"
+            android:layout_width="0dp"
+            android:layout_height="36dp"
+            android:layout_marginHorizontal="6dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_input"
+            android:hint="@string/url_hint"
+            android:imeOptions="actionGo"
+            android:inputType="textUri"
+            android:maxLines="1"
+            android:paddingHorizontal="10dp"
+            android:singleLine="true"
+            android:textColor="@color/text_primary"
+            android:textColorHint="@color/text_muted"
+            android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/btnReload"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
+            android:background="@drawable/bg_btn_secondary"
+            android:padding="0dp"
+            android:text="↻"
+            android:textColor="@color/text_primary"
+            android:textSize="15sp" />
+
+        <Button
+            android:id="@+id/btnGo"
+            android:layout_width="42dp"
+            android:layout_height="34dp"
+            android:layout_marginStart="4dp"
+            android:background="@drawable/bg_btn_primary"
+            android:padding="0dp"
+            android:text="Go"
+            android:textAllCaps="false"
+            android:textColor="@color/text_primary"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <ProgressBar
+        android:id="@+id/progressBar"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="3dp"
+        android:max="100"
+        android:progress="0"
+        android:progressTint="@color/accent_primary"
+        android:visibility="gone" />
+
+    <!-- Content Area -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <org.mozilla.geckoview.GeckoView
+            android:id="@+id/geckoView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <LinearLayout
+            android:id="@+id/welcomeOverlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@color/bg_base"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:padding="24dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_card"
+                android:gravity="center_horizontal"
+                android:orientation="vertical"
+                android:padding="22dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/welcome_title"
+                    android:textColor="@color/text_primary"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:gravity="center"
+                    android:lineSpacingExtra="3dp"
+                    android:text="@string/welcome_desc"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="13sp" />
+
+                <Button
+                    android:id="@+id/btnWelcomeLoad"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_marginTop="18dp"
+                    android:background="@drawable/bg_btn_primary"
+                    android:text="@string/welcome_cta"
+                    android:textAllCaps="false"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+            </LinearLayout>
+        </LinearLayout>
+    </FrameLayout>
+</LinearLayout>
