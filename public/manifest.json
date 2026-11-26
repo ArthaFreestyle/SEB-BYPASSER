@@ -1,15 +1,20 @@
 {
-    "manifest_version": 2,
+    "manifest_version": 3,
     "name": "SEB",
     "version": "1.0",
     "permissions": [
-        "webRequest",
-        "webRequestBlocking",
-        "windows",
+        "debugger",
+        "storage",
+        "tabs"
+    ],
+    "host_permissions": [
         "<all_urls>"
     ],
     "background": {
-        "page": "bg.html"
+        "service_worker": "assets/background.js",
+        "type": "module"
     },
-    "browser_action": {}
+    "action": {
+        "default_title": "SEB configuration"
+    }
 }
